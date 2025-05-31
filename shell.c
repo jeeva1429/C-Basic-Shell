@@ -3,8 +3,7 @@
 #include <unistd.h>
 #include <sys/types.h>
 #include <stdlib.h>
-
-
+#include <sys/wait.h>
 void exe_cmd(char *argv_ptr[]) {
     pid_t pid;
     pid = fork();
@@ -14,6 +13,9 @@ void exe_cmd(char *argv_ptr[]) {
     }
     else if(pid == 0) {
         execvp(argv_ptr[0],argv_ptr);
+        perror("Command execution failed");
+        exit(1);
+
     }
     else {
         wait(NULL);
@@ -37,16 +39,18 @@ int main(){
     char *argv[5];
     char commandBuf[100];
     while(1) {
-        printf("ungal boodham >>");
+        printf("uthravu_ejamaan>>");
+        fflush(stdout);
         fgets(commandBuf,100,stdin);
-        parse_cmd(commandBuf,argv);
-
-        if(strcmp(argv[0],"exit")== 0) {
-            printf("Application exiting...\n");
-            break;
+        if (strcmp(commandBuf,"\n") != 0) {
+            parse_cmd(commandBuf,argv);
+            if(strcmp(argv[0],"exit") == 0) {
+                printf("bootham thoongudhu...\n");
+                break;
+            }
+            else {
+                exe_cmd(argv);
+            }  
         }
-        else {
-        exe_cmd(argv);
-        }  
     }
 }
