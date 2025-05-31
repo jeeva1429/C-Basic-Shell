@@ -17,4 +17,6 @@ This is a personal learning project where I'm building a basic shell in C to dee
 
 This is a work in progress — more features will be added step-by-step!
 
+A sample image of the shell,
+
 ![alt text](image.png)
