@@ -19,4 +19,4 @@ This is a work in progress — more features will be added step-by-step!
 
 A sample image of the shell,
 
-![alt text](image.png)
+![shell sample png](image.png)
