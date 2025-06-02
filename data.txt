@@ -1,0 +1,6 @@
+a.out
+data
+data.txt
+output
+README.md
+shell.c
