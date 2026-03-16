@@ -5,34 +5,44 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <fcntl.h>
+#define MAX_CMDS 10
+
 
 struct cmd_exe_struct {
-    char *args[20];     // arguments (like ls, -l, etc.)
+    char *args[50];     // arguments (like ls, -l, etc.)
     int is_redirected;  // 0 = no, 1 = yes
-    int redir_type;     // 1 = output (>), 0 = input (<)
-    char *file_path;    // file for redirection
+    char *redir_type;   // 1 = output (>), 0 = input (<)
+    char *file_path;
 };
 
-void execute_cmd(struct cmd_exe_struct *cmd) {
+
+struct pipeline {
+    struct cmd_exe_struct cmds[MAX_CMDS];
+    int cmd_count;
+};
+
+void execute_cmd(struct cmd_exe_struct cmd) {
     pid_t pid  = fork();
     if (pid < 0) {
         perror("Process creation failed!");
-        exit(0);
+        exit(1);
     } else if (pid == 0) {
-        if(cmd->is_redirected) {
-        int file_fd;
-        if(cmd->redir_type == 1) {   // output ">"
-            file_fd = open(cmd->file_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-            if(file_fd < 0) { perror("open failed"); exit(1); }
-            dup2(file_fd, STDOUT_FILENO);
-        } else {                     // input "<"
-            file_fd = open(cmd->file_path, O_RDONLY);
-            if(file_fd < 0) { perror("open failed"); exit(1); }
-            dup2(file_fd, STDIN_FILENO);
+        if(cmd.is_redirected) {
+            int file_fd;
+            if(strcmp(cmd.redir_type, ">") == 0) {   // output ">"
+                file_fd = open(cmd.file_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+                if(file_fd < 0) { perror("open failed"); exit(1); }
+                dup2(file_fd, STDOUT_FILENO);
+            } else {  // input "<"
+                file_fd = open(cmd.file_path, O_RDONLY);
+                if(file_fd < 0) { perror("open failed"); exit(1); }
+                dup2(file_fd, STDIN_FILENO);
+            }
+            close(file_fd);
         }
-        close(file_fd);  // close original FD after dup2
-        }
-        execvp(cmd->args[0], cmd->args);
+        execvp(cmd.args[0], cmd.args);
+        perror("Function execution failed!x");
+        exit(1);
     }
     else {
         int status;
@@ -42,45 +52,99 @@ void execute_cmd(struct cmd_exe_struct *cmd) {
 
 // cat < output.txt | sort | uniq | wc
 int main() {
-    char cmd_string[48];
-    int command_size = 10;
-    struct cmd_exe_struct *cmd_exe_ptr = malloc(sizeof(struct cmd_exe_struct));
+    char cmd_string[480];
     while (1) {
+        struct pipeline *pipe_struct = calloc(1, sizeof(struct pipeline));
         int is_redirected = 0;
         printf("$");
         fgets(cmd_string, sizeof(cmd_string), stdin);
-        char *cmd_arr[command_size];
         cmd_string[strcspn(cmd_string,"\n")] = '\0';
         char *token = strtok(cmd_string, " ");
-        int tokens_count = 0;
         if (strcmp(token, "cd") == 0) {
             printf("Feature is yet to be implemented\n");
         } else {
-            while(token != NULL) {
-                if (strcmp(token,">") == 0 || strcmp(token, "<") == 0) {
-                    is_redirected = 1;
-                    break;
+            int pipe_cnt= 0;
+            int tokens_count = 0;
+            while (token != NULL) {
+                if (strcmp(token, "|") == 0) {
+                    pipe_struct->cmds[pipe_cnt].args[tokens_count] = NULL;
+                    pipe_cnt++;
+                    tokens_count = 0;
+                } else if (strcmp(token,">") == 0 || strcmp(token, "<") == 0) {
+                    pipe_struct->cmds[pipe_cnt].is_redirected = 1;
+                    pipe_struct->cmds[pipe_cnt].redir_type = token;
+                } else {
+                    if (pipe_struct->cmds[pipe_cnt].is_redirected && pipe_struct->cmds[pipe_cnt].file_path == NULL){
+                        pipe_struct->cmds[pipe_cnt].file_path = token;
+                    } else {
+                        pipe_struct->cmds[pipe_cnt].args[tokens_count] = token;
+                    }
+                    tokens_count++;
                 }
-                cmd_exe_ptr->args[tokens_count] = token;
-                tokens_count ++;
-                token = strtok(NULL," ");
-            }
-            cmd_exe_ptr->args[tokens_count] = NULL;
-            cmd_exe_ptr->is_redirected = 0;
-            if(is_redirected == 1) {
-                int redir_type = strcmp(token,">") == 0 ? 1 : 0;
-                char* file_path =  strtok(NULL," ");
-                if (file_path == NULL) {
-                    perror("Please input valid file path to redirect");
-                    exit(1);
+                token = strtok(NULL, " ");
+            };
+            pipe_struct->cmd_count = pipe_cnt+1;
+            pipe_struct->cmds[pipe_cnt].args[tokens_count] = NULL;
+
+            if (pipe_cnt == 0) {
+                execute_cmd(pipe_struct->cmds[0]);
+            } else {
+                int pipeFd[pipe_cnt][2];
+                for (int i = 0; i < pipe_cnt; i++) {
+                    if (pipe(pipeFd[i]) == -1) {
+                           perror("pipe initialization failed");
+                           exit(1);
+                    }
                 };
-                cmd_exe_ptr->redir_type = redir_type;
-                cmd_exe_ptr->file_path = file_path;
-                cmd_exe_ptr->is_redirected = 1;
+                for (int i = 0; i < pipe_struct->cmd_count; i++) {
+                    printf("cmd[%d]: args[0] = %s\n", i, pipe_struct->cmds[i].args[0]);
+                }
+                pid_t pids[MAX_CMDS];
+                for(int i = 0; i < pipe_struct->cmd_count; i++) {
+                    pids[i] = fork();
+                    if (pids[i] < 0) {
+                        perror("Process creation failed!");
+                        exit(1);
+                    } else if (pids[i] == 0) {
+                        if (i < pipe_cnt) {
+                            dup2(pipeFd[i][1], STDOUT_FILENO);
+                        }
+                        if (i > 0) {
+                            dup2(pipeFd[i-1][0], STDIN_FILENO);
+                        }
+                        if(pipe_struct->cmds[i].is_redirected) {
+                            int file_fd;
+                            if(strcmp(pipe_struct->cmds[i].redir_type, ">") == 0) {   // output ">"
+                                file_fd = open(pipe_struct->cmds[i].file_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+                                if(file_fd < 0) { perror("open failed"); exit(1); }
+                                dup2(file_fd, STDOUT_FILENO);
+                            } else {  // input "<"
+                                file_fd = open(pipe_struct->cmds[i].file_path, O_RDONLY);
+                                if(file_fd < 0) { perror("open failed"); exit(1); }
+                                dup2(file_fd, STDIN_FILENO);
+                            }
+                            close(file_fd);
+                        }
+                        for(int j = 0; j < pipe_cnt; j++) {
+                            close(pipeFd[j][0]);
+                            close(pipeFd[j][1]);
+                        }
+                        execvp(pipe_struct->cmds[i].args[0], pipe_struct->cmds[i].args);
+                        perror("command execution failed!");
+                        exit(1);
+                    }
+                }
+
+                for(int j = 0; j < pipe_cnt; j++) {
+                    close(pipeFd[j][0]);
+                    close(pipeFd[j][1]);
+                }
+
+                for (int i = 0; i < pipe_struct->cmd_count; i++) {
+                    waitpid(pids[i], NULL, 0);
+                }
             }
-            execute_cmd(cmd_exe_ptr);
-            free(cmd_exe_ptr); //free the allocated memory for command arguments
         }
+        free(pipe_struct); //free the allocated memory for command arguments
     }
-    
 }
